@@ -1,11 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, Image, TouchableOpacity, ScrollView, ActivityIndicator, Modal, Alert,FlatList } from 'react-native';
+import { View, Text, Image, TouchableOpacity, ScrollView, ActivityIndicator, Modal, Alert, FlatList } from 'react-native';
 import tw from 'tailwind-react-native-classnames';
 import { API_ENDPOINTS } from "../../component/config";
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
-import Icon from 'react-native-vector-icons/FontAwesome';
+import Icon from 'react-native-vector-icons/AntDesign';
+import { request, PERMISSIONS, RESULTS } from 'react-native-permissions';
+import ImageViewing from 'react-native-image-viewing';
 export default function BookingSummary({ route, navigation }) {
     const { bookingId, latitude, longitude } = route.params; // Extracting the id, lat, and lng from route params
     const [bookingData, setBookingData] = useState(null);
@@ -16,6 +18,18 @@ export default function BookingSummary({ route, navigation }) {
     const [photoModalVisible, setPhotoModalVisible] = useState(false);
     const [photos, setPhotos] = useState([]);
     const [attachments, setAttachments] = useState([]);
+    const [isVisible, setIsVisible] = useState(false);
+    const [selectedIndex, setSelectedIndex] = useState(0);
+
+    const openLightbox = (index) => {
+        setSelectedIndex(index);
+        setIsVisible(true);
+    };
+    useEffect(() => {
+        fetchBookingDetails();
+        fetchAttachments();
+    }, [bookingId, latitude, longitude]);
+
     const fetchBookingDetails = async () => {
         try {
             const token = await AsyncStorage.getItem('token');
@@ -43,7 +57,21 @@ export default function BookingSummary({ route, navigation }) {
         }
     };
 
-   
+    const fetchAttachments = async () => {
+        try {
+            const token = await AsyncStorage.getItem('token');
+            const response = await axios.get(`${API_ENDPOINTS.FETCH_ATTACHMENTS}/${bookingId}`, {
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                },
+            });
+            console.log(response.data.data)
+
+            setAttachments(response.data.data); // Assume API returns a list of attachment URLs
+        } catch (error) {
+            console.error("Error fetching attachments:", error);
+        }
+    };
 
     console.log("Latitude: ", latitude, "Longitude: ", longitude); // Debugging location
 
@@ -54,6 +82,10 @@ export default function BookingSummary({ route, navigation }) {
             </View>
         );
     }
+    const requestCameraPermission = async () => {
+        const result = await request(PERMISSIONS.ANDROID.CAMERA);
+        return result === RESULTS.GRANTED;
+    };
 
 
     const handlePhotoUpload = async (type) => {
@@ -61,7 +93,7 @@ export default function BookingSummary({ route, navigation }) {
             mediaType: 'photo',
             quality: 1,
         };
-    
+
         if (type === 'camera') {
             launchCamera(options, async (response) => {
                 if (response.didCancel) {
@@ -91,21 +123,21 @@ export default function BookingSummary({ route, navigation }) {
             });
         }
     };
-    
+
     const uploadPhoto = async (photoUri, id) => {
         const formData = new FormData();
         const fileName = `photo_${id}.jpg`; // Dynamically set the file name based on the ID
-    
+
         formData.append('file', {
             uri: photoUri,
             name: fileName, // Set the file name dynamically
             type: 'image/jpeg', // Adjust based on the image format
         });
-    
+
         try {
             const token = await AsyncStorage.getItem('token'); // Get your authentication token if needed
-            // const uploadUrl = `${API_ENDPOINTS.UPLOAD_PHOTO}/${id}`; // Append the ID to the endpoint URL
-            const uploadUrl = `${API_ENDPOINTS.UPLOAD_PHOTO}/10`;
+            const uploadUrl = `${API_ENDPOINTS.UPLOAD_PHOTO}/${bookingId}`; // Append the ID to the endpoint URL
+            // const uploadUrl = `${API_ENDPOINTS.UPLOAD_PHOTO}/10`;
             const response = await axios.post(
                 uploadUrl,
                 formData,
@@ -116,9 +148,10 @@ export default function BookingSummary({ route, navigation }) {
                     },
                 }
             );
-    
+
             if (response.status === 200) {
                 console.log('Photo uploaded successfully:', response.data);
+                fetchAttachments();
                 Alert.alert('Success', 'Photo uploaded successfully');
             } else {
                 console.error('Failed to upload photo:', response.data);
@@ -129,32 +162,16 @@ export default function BookingSummary({ route, navigation }) {
             Alert.alert('Error', 'An error occurred while uploading the photo');
         }
     };
-    const fetchAttachments = async () => {
-        try {
-            const token = await AsyncStorage.getItem('token');
-            const response = await axios.get(`${API_ENDPOINTS.FETCH_ATTACHMENTS}/${bookingId}`, {
-                headers: {
-                    Authorization: `Bearer ${token}`,
-                },
-            });
 
-            setAttachments(response.data.attachments); // Assume API returns a list of attachment URLs
-        } catch (error) {
-            console.error("Error fetching attachments:", error);
-        }
-    };
     // const fetchAttachment=()=>{
     //     fetch('')
     //     .then(res=>res.json())
     //     .then(res=>res.data)
     //     .catch(error=>console.log(error))
     // }
-    
-        
-    useEffect(() => {
-        fetchBookingDetails();
-        fetchAttachments();
-    }, [bookingId, latitude, longitude]);
+
+
+
 
     if (!bookingData) {
         return (
@@ -223,7 +240,7 @@ export default function BookingSummary({ route, navigation }) {
                 </View>
 
                 {/* Location */}
-               
+
 
                 {/* Map View */}
                 {/* Attachments */}
@@ -231,51 +248,62 @@ export default function BookingSummary({ route, navigation }) {
                     <Text style={tw`text-gray-900 text-lg mb-2`}>Attachments</Text>
                     <FlatList
                         data={attachments}
-                        keyExtractor={(item, index) => index.toString()}
+                        keyExtractor={(item) => item.id.toString()}
                         horizontal
-                        renderItem={({ item }) => (
-                            <Image
-                                source={{ uri: item.url }}
-                                style={tw`w-32 h-32 mr-2 rounded-lg`}
-                            />
+                        renderItem={({ item, index }) => (
+                            <TouchableOpacity onPress={() => openLightbox(index)}>
+                                <Image
+                                    source={{ uri: item.path }}
+                                    style={tw`w-32 h-32 mr-2 rounded-lg`}
+                                />
+                            </TouchableOpacity>
                         )}
                     />
+                    <ImageViewing
+                        images={attachments.map((item) => ({ uri: item.path }))}
+                        imageIndex={selectedIndex}
+                        visible={isVisible}
+                        onRequestClose={() => setIsVisible(false)}
+                    />
+
                 </View>
+
+                <View style={tw`h-64`}></View>
             </ScrollView>
 
             {/* Action Buttons */}
-            <View style={tw`flex-row justify-around items-center px-4 absolute bottom-1 w-full`}>
-    {/* Reject Button */}
-    <TouchableOpacity
-        onPress={() => {
-            setActionType('Reject');
-            setModalVisible(true);
-        }}
-        style={tw`bg-red-500 flex-1 p-4 mx-2 rounded-lg`}
-    >
-        <Text style={tw`text-white text-lg text-center`}>Reject</Text>
-    </TouchableOpacity>
+            <View style={tw`flex-row bg-white justify-around items-center  absolute bottom-0 w-full`}>
+                {/* Reject Button */}
+                <TouchableOpacity
+                    onPress={() => {
+                        setActionType('Reject');
+                        setModalVisible(true);
+                    }}
+                    style={tw`bg-red-500 flex-1 p-4  `}
+                >
+                    <Text style={tw`text-white text-lg text-center`}>Reject</Text>
+                </TouchableOpacity>
 
-    {/* Approve Button */}
-    <TouchableOpacity
-        onPress={() => {
-            setActionType('Approve');
-            setModalVisible(true);
-        }}
-        style={tw`bg-green-500 flex-1 p-4 mx-2 rounded-lg`}
-    >
-        <Text style={tw`text-white text-lg text-center`}>Approve</Text>
-    </TouchableOpacity>
+                {/* Approve Button */}
+                <TouchableOpacity
+                    onPress={() => {
+                        setActionType('Approve');
+                        setModalVisible(true);
+                    }}
+                    style={tw`bg-green-500 flex-1 p-4  `}
+                >
+                    <Text style={tw`text-white text-lg text-center`}>Complete</Text>
+                </TouchableOpacity>
 
-    {/* Upload Photos Button */}
-    <TouchableOpacity
-            onPress={() => setPhotoModalVisible(true)}
-            style={tw`bg-blue-500 flex-row items-center justify-center p-4 mx-2 rounded-lg`}
-        >
-            <Icon name="camera" size={20} color="white" style={tw`mr-2`} /> {/* Camera icon */}
-            {/* <Text style={tw`text-white text-lg`}>Upload Photos</Text> */}
-        </TouchableOpacity>
-</View>
+                {/* Upload Photos Button */}
+                <TouchableOpacity
+                    onPress={() => setPhotoModalVisible(true)}
+                    style={tw`bg-blue-500 flex-row items-center justify-center p-4 `}
+                >
+                    <Icon name="stepforward" size={20} color="white" style={tw`mr-2`} /> Camera icon
+                    {/* <Text style={tw`text-white text-lg`}>Upload Photos</Text> */}
+                </TouchableOpacity>
+            </View>
 
 
             <Modal
